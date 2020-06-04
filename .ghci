@@ -1,5 +1,6 @@
-:set -fwarn-unused-binds 
--- -fwarn-unused-imports 
-:set -isrc
-:load Control.Grammar.Prim
+:set -fwarn-unused-binds
+-- -fwarn-unused-imports
+:set -isrc -itest
+:load Control.Grammar
+:load Spec
 :ctags

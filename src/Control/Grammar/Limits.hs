@@ -1,6 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -19,39 +20,38 @@ module Control.Grammar.Limits
   where
 
 -- base
-import Data.Semigroup
-import Data.Monoid
-import Data.Functor.Compose
-import Data.Functor.Identity
-import Control.Applicative
 import Data.Functor.Contravariant
-
--- aeson
-import Data.Aeson       as J
-import Data.Aeson.Types as J
+import Data.Void
+import Data.Functor.Identity
 
 -- adjunctions
-import Data.Functor.Contravariant.Rep 
+import Data.Functor.Contravariant.Rep
 
 class NatTransformable n where
   natmap :: (forall b. f b -> g b) -> n f -> n g
 
-class NatComposeable n where
+class NatComposable n where
   natcomp :: (forall b. f b -> g b -> h b) -> n f -> n g -> n h
   -- natcomp :: n f -> n g -> n (Product f g)
 
-class (NatTransformable (CoLimit a), NatComposeable (CoLimit a)) => HasCoLimit a where
+class NatFoldable n where
+  natfold :: Monoid m => (forall b. f b -> m) -> n f -> m
+
+class NatTraversable n where
+  natseq :: Applicative f => n f -> f (n Identity)
+
+class (NatTransformable (CoLimit a), NatComposable (CoLimit a)) => HasCoLimit a where
   type CoLimit a :: (* -> *) -> *
   interpret  :: CoLimit a (Op b) -> a -> b
   construct  :: CoLimit a (Op a)
 
-class (NatTransformable (Limit a), NatComposeable (Limit a)) => HasLimit a where
+class (NatTransformable (Limit a), NatComposable (Limit a)) => HasLimit a where
   type Limit a :: (* -> *) -> *
-  extract :: Limit a ((->) a) 
+  extract :: Limit a ((->) a)
   inject  :: Limit a ((->) b) -> b -> a
 
-data Two a b f = Two 
-  { noOne :: f a 
+data Two a b f = Two
+  { noOne :: f a
   , noTwo :: f b
   }
 
@@ -61,15 +61,20 @@ instance NatTransformable (Two a b) where
     , noTwo = nat noTwo
     }
 
-instance NatComposeable (Two a b) where
+instance NatComposable (Two a b) where
   natcomp comp a b  = Two
     { noOne = noOne a `comp` noOne b
     , noTwo = noTwo a `comp` noTwo b
     }
 
+instance NatTraversable (Two a b) where
+  natseq a = Two
+    <$> (Identity <$> noOne a)
+    <*> (Identity <$> noTwo a)
+
 instance HasLimit (a, b) where
   type Limit (a, b) = Two a b
-  extract = Two fst snd 
+  extract = Two fst snd
   inject Two {..} b = (noOne b, noTwo b)
 
 data CoEither a b f = CoEither
@@ -78,11 +83,11 @@ data CoEither a b f = CoEither
   }
 
 instance NatTransformable (CoEither a b) where
-  natmap nat CoEither {..} = CoEither 
+  natmap nat CoEither {..} = CoEither
     { ifLeft = nat ifLeft
-    , ifRight = nat ifRight 
+    , ifRight = nat ifRight
     }
-instance NatComposeable (CoEither a b) where
+instance NatComposable (CoEither a b) where
   natcomp comp a b = CoEither
     { ifLeft  = ifLeft a  `comp` ifLeft b
     , ifRight = ifRight a `comp` ifRight b
@@ -95,23 +100,23 @@ instance HasCoLimit (Either a b) where
     Left  a -> index ifLeft  a
     Right b -> index ifRight b
 
-  construct = CoEither 
-    { ifLeft  = Op Left 
+  construct = CoEither
+    { ifLeft  = Op Left
     , ifRight = Op Right
     }
 
-data CoMaybe a f = CoMaybe 
+data CoMaybe a f = CoMaybe
   { ifJust :: f a
   , ifNothing :: f ()
   }
 
 instance NatTransformable (CoMaybe a) where
-  natmap nat CoMaybe {..} = CoMaybe 
+  natmap nat CoMaybe {..} = CoMaybe
     { ifJust = nat ifJust
-    , ifNothing = nat ifNothing 
+    , ifNothing = nat ifNothing
     }
 
-instance NatComposeable (CoMaybe a) where
+instance NatComposable (CoMaybe a) where
   natcomp comp a b = CoMaybe
     { ifJust    = ifJust a    `comp` ifJust b
     , ifNothing = ifNothing a `comp` ifNothing b
@@ -124,7 +129,33 @@ instance HasCoLimit (Maybe a) where
     Just a  -> index ifJust    a
     Nothing -> index ifNothing ()
 
-  construct = CoMaybe 
-    { ifJust    = Op Just 
+  construct = CoMaybe
+    { ifJust    = Op Just
     , ifNothing = Op (const Nothing)
     }
+
+newtype Terminal (t :: * -> *) = Terminal ()
+
+instance NatTransformable Terminal where
+  natmap fn (Terminal ()) = Terminal ()
+
+instance NatComposable Terminal where
+  natcomp fn (Terminal ()) (Terminal ()) = Terminal ()
+
+instance HasLimit () where
+  type Limit () = Terminal
+  extract = Terminal ()
+  inject (Terminal ()) = const ()
+
+newtype Initial  (t :: * -> *) = Initial Void
+
+instance NatTransformable Initial where
+  natmap fn = \case
+
+instance NatComposable Initial where
+  natcomp fn (Initial a) (Initial b) = case (a, b) of
+
+instance HasCoLimit Void where
+  type CoLimit Void = Terminal
+  interpret = \case
+  construct = Terminal ()

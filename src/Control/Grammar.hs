@@ -12,6 +12,11 @@ In contrast to [boomerang], this library tries
 
 -}
 module Control.Grammar
-  where
+  ( module Control.Grammar.Prim
+  , module Control.Grammar.Json
+  , module Control.Grammar.Limits
+  ) where
 
-
+import Control.Grammar.Prim
+import Control.Grammar.Json
+import Control.Grammar.Limits
