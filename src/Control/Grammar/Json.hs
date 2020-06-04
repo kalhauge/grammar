@@ -56,7 +56,7 @@ import qualified Data.HashMap.Strict as HM
 
 -- grammar
 import Control.Grammar.Prim
--- import Control.Grammar.Limits
+import Control.Grammar.Limits
 
 newtype JsonDecoder a = JsonDecoder { unJsonDecoder :: J.Value -> J.Parser a }
   deriving Functor
@@ -67,53 +67,83 @@ newtype JsonEncoder a = JsonEncoder { unJsonEncoder :: a -> J.Encoding}
   deriving Contravariant via Op J.Encoding
 
 data JsonG a where
-  JsonObjectG :: String -> Grammar JsonKeyG a -> JsonG a
-  JsonArrayG  :: String -> Grammar JsonG a -> JsonG a
-  JsonPrim    :: JsonDecoder a -> JsonEncoder a -> JsonG a
+  JsonPrim ::
+    JsonDecoder a -> JsonEncoder a -> JsonG a
+  JsonSumG ::
+    SumG JsonG a -> JsonG a
+  JsonObjectG ::
+    String -> ProdG JsonKeyG a -> JsonG a
+  JsonArrayG  ::
+    String -> ProdG JsonG a -> JsonG a
 
-data JsonKeyG a = JsonKeyG
-  { gJsonKey     :: Text
-  , gJsonKeyGrammar :: JsonG a
-  }
+data JsonKeyG a where
+  JsonKeyG :: Text -> JsonG a -> JsonKeyG a
+  RemovableJsonKeyG :: Text -> JsonG a -> JsonKeyG (Maybe a)
 
-newtype JsonItemG a = JsonItemG
-  { gJsonItemGrammar :: JsonG a
-  }
+(|=) :: Text -> JsonG a -> JsonKeyG a
+(|=) = JsonKeyG
 
-(|=) :: Text -> JsonG a -> Grammar JsonKeyG a
-(|=) t j = Prim $ JsonKeyG t j
+(?=) :: Text -> JsonG a -> JsonKeyG (Maybe a)
+(?=) = RemovableJsonKeyG
 
 encodeJsonG :: JsonG a -> a -> Encoding
 encodeJsonG = \case
-  JsonObjectG _ grm -> J.pairs . grammarToSeries grm
-  JsonArrayG _ grm -> J.list id . grammarToArray grm
-  JsonPrim _ encoder -> unJsonEncoder encoder
+  JsonSumG sum -> foldSumG encodeJsonG sum
+    -- J.pairs . grammarToSeries grm
+  JsonObjectG _ prod ->
+    J.pairs <$>
+      foldProdG (\case
+        JsonKeyG key g -> J.pair key . encodeJsonG g
+        RemovableJsonKeyG key g -> maybe mempty (J.pair key . encodeJsonG g)
+      ) prod
+  JsonArrayG _ prod ->
+    J.list id <$> foldProdG
+      (\t -> (:[]) . encodeJsonG t )
+      prod
+  JsonPrim _ encoder ->
+    unJsonEncoder encoder
+
+decodeJsonG :: JsonG a -> J.Value -> J.Parser a
+decodeJsonG = \case
+  JsonSumG sum -> unfoldSumG decodeJsonG sum
+  JsonPrim decoder _ -> unJsonDecoder decoder
+  JsonObjectG name g -> J.withObject name $ unfoldProdG unObject g
+  JsonArrayG name g -> J.withArray name $ \arr -> do
+    (a, s) <- runStateT (unfoldProdG unArray g ()) (V.toList arr)
+    case s of
+      [] -> return a
+      a -> fail ("too many items")
+
+ where
+  unObject :: JsonKeyG a -> J.Object -> J.Parser a
+  unObject = \case
+    JsonKeyG key p ->
+      maybe empty (decodeJsonG p) . HM.lookup key
+    RemovableJsonKeyG key p ->
+      maybe (pure Nothing) (fmap Just . decodeJsonG p) . HM.lookup key
+
+  unArray :: JsonG a -> () -> StateT [J.Value] J.Parser a
+  unArray jg () = StateT $ \case
+      a:as -> (,as) <$> decodeJsonG jg a
+      [] -> fail "too few items"
+
 
 jsonGToLazyByteString :: JsonG a -> a -> BL.ByteString
 jsonGToLazyByteString jg =
   J.encodingToLazyByteString . encodeJsonG jg
 
-grammarToSeries :: Grammar JsonKeyG a -> a -> J.Series
-grammarToSeries = foldGrammar \t a ->
-  J.pair (gJsonKey t) (encodeJsonG (gJsonKeyGrammar t) a)
+objectG :: (NatTraversable (Limit a), HasLimit a) => String -> Limit a JsonKeyG -> JsonG a
+objectG name = JsonObjectG name . simpleProdG
 
-grammarToArray :: Grammar JsonG a -> a -> [J.Encoding]
-grammarToArray = foldGrammar \t a ->
-  [encodeJsonG t a]
+arrayG :: (NatTraversable (Limit a), HasLimit a) => String -> Limit a JsonG -> JsonG a
+arrayG name = JsonArrayG name . simpleProdG
 
-nullG :: Grammar JsonG ()
-nullG = Prim $ JsonPrim
+nullG :: JsonG ()
+nullG = JsonPrim
   (JsonDecoder \v ->
     if v == J.Null then return () else fail "expected null"
   )
   (JsonEncoder $ const J.null_)
-
-orNullG :: Grammar JsonG a -> Grammar JsonG (Maybe a)
-orNullG t =
-  maybeG t nullG
-
-orNothingG :: Grammar JsonKeyG a -> Grammar JsonKeyG (Maybe a)
-orNothingG t = maybeG t emptyG
 
 jsonGFromLazyByteString :: JsonG a -> BL.ByteString -> Either String a
 jsonGFromLazyByteString jg =
@@ -121,30 +151,6 @@ jsonGFromLazyByteString jg =
  where
   eitherFormatError :: Either (JSONPath, String) a -> Either String a
   eitherFormatError = either (Left . uncurry formatError) Right
-
-
-decodeJsonG :: JsonG a -> J.Value -> J.Parser a
-decodeJsonG = \case
-  JsonPrim decoder _ -> unJsonDecoder decoder
-  JsonObjectG name g -> J.withObject name (grammarFromObject g)
-  JsonArrayG name g -> J.withArray name (grammarFromArray g)
-
-grammarFromObject :: Grammar JsonKeyG a -> J.Object -> J.Parser a
-grammarFromObject = runReaderT . unfoldGrammar \(JsonKeyG key p) ->
-  ReaderT $ maybe empty (decodeJsonG p) . HM.lookup key
-
-newtype StackM a = State [a]
-
-grammarFromArray :: Grammar JsonG a -> J.Array -> J.Parser a
-grammarFromArray grm arr = do
-  (a, s) <- runStateT (run grm) (V.toList arr)
-  case s of
-    [] -> return a
-    _ -> fail "too many items"
- where
-  run = unfoldGrammar \jg -> StateT $ \case
-    a:as -> (,as) <$> decodeJsonG jg a
-    [] -> fail "too few items"
 
 anyG :: (ToJSON a, FromJSON a) => JsonG a
 anyG = JsonPrim

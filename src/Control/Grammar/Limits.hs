@@ -22,6 +22,8 @@ module Control.Grammar.Limits
 -- base
 import Data.Functor.Contravariant
 import Data.Void
+import Data.Monoid
+import Control.Applicative
 import Data.Functor.Identity
 
 -- adjunctions
@@ -34,11 +36,11 @@ class NatComposable n where
   natcomp :: (forall b. f b -> g b -> h b) -> n f -> n g -> n h
   -- natcomp :: n f -> n g -> n (Product f g)
 
-class NatFoldable n where
-  natfold :: Monoid m => (forall b. f b -> m) -> n f -> m
-
 class NatTraversable n where
   natseq :: Applicative f => n f -> f (n Identity)
+
+class NatFoldable n where
+  natfold :: Monoid m => n (Const m) -> m
 
 class (NatTransformable (CoLimit a), NatComposable (CoLimit a)) => HasCoLimit a where
   type CoLimit a :: (* -> *) -> *
@@ -122,6 +124,9 @@ instance NatComposable (CoMaybe a) where
     , ifNothing = ifNothing a `comp` ifNothing b
     }
 
+instance NatFoldable (CoMaybe a) where
+  natfold (CoMaybe a b) = getConst a <> getConst b
+
 instance HasCoLimit (Maybe a) where
   type CoLimit (Maybe a) = CoMaybe a
 
@@ -134,28 +139,28 @@ instance HasCoLimit (Maybe a) where
     , ifNothing = Op (const Nothing)
     }
 
-newtype Terminal (t :: * -> *) = Terminal ()
+data Terminal (t :: * -> *) = Terminal
 
 instance NatTransformable Terminal where
-  natmap fn (Terminal ()) = Terminal ()
+  natmap fn (Terminal) = Terminal
 
 instance NatComposable Terminal where
-  natcomp fn (Terminal ()) (Terminal ()) = Terminal ()
+  natcomp fn (Terminal) (Terminal) = Terminal
 
 instance HasLimit () where
   type Limit () = Terminal
-  extract = Terminal ()
-  inject (Terminal ()) = const ()
+  extract = Terminal
+  inject (Terminal) = const ()
 
-newtype Initial  (t :: * -> *) = Initial Void
+data Initial  (t :: * -> *)
 
 instance NatTransformable Initial where
   natmap fn = \case
 
 instance NatComposable Initial where
-  natcomp fn (Initial a) (Initial b) = case (a, b) of
+  natcomp fn a b = case (a, b) of
 
 instance HasCoLimit Void where
   type CoLimit Void = Terminal
   interpret = \case
-  construct = Terminal ()
+  construct = Terminal
