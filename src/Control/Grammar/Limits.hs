@@ -52,6 +52,32 @@ class (NatTransformable (Limit a), NatComposable (Limit a)) => HasLimit a where
   extract :: Limit a ((->) a)
   inject  :: Limit a ((->) b) -> b -> a
 
+
+newtype Single a = Single { unSingle :: a }
+data One a f = One (f a)
+
+instance NatTransformable (One a) where
+  natmap nat (One a) = One (nat a)
+
+instance NatComposable (One a) where
+  natcomp comp (One a) (One b)  = One (a `comp` b)
+
+instance NatTraversable (One a) where
+  natseq (One a) = One . Identity <$> a
+
+instance NatFoldable (One a) where
+  natfold (One (Const a)) = a
+
+instance HasLimit (Single a) where
+  type Limit (Single a) = One a
+  extract = One (\(Single a) -> a)
+  inject (One a) b = Single (a b)
+
+instance HasCoLimit (Single a) where
+  type CoLimit (Single a) = One a
+  construct = One (Op Single)
+  interpret (One (Op f)) (Single b) = f b
+
 data Two a b f = Two
   { noOne :: f a
   , noTwo :: f b

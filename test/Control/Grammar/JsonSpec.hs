@@ -33,7 +33,10 @@ data Person = Person
 $(makeLimit ''Person)
 
 personG :: JsonG Person
-personG = objectG "Person" PersonLim
+personG = objectG "Person" personKG
+
+personKG :: JsonKeyG Person
+personKG = simpleProdG PersonLim
   { onPersonName =
       "name"   |= textG
   , onPersonAge =
@@ -42,6 +45,25 @@ personG = objectG "Person" PersonLim
       "phone"  ?= textG
   , onPersonParent =
       "parent" ?= personG
+  }
+
+data Personel
+  = Boss Person
+  | Employee Person
+  deriving (Show, Eq)
+
+$(makeCoLimit ''Personel)
+
+personelG :: JsonG Personel
+personelG = simpleSumG $ PersonelCoLim
+  { ifBoss = objectG "Boss" ("boss" |= personG)
+  , ifEmployee = objectG "Employee" ("employee" |= personG)
+  }
+
+embPersonelG :: JsonG Personel
+embPersonelG = objectG "Personel" . simpleSumG $ PersonelCoLim
+  { ifBoss = ("type" |= val "boss") **> personKG
+  , ifEmployee = ("type" |= val "employee") **> personKG
   }
 
 spec :: Spec
@@ -56,6 +78,14 @@ spec = do
         (Person "Peter" 34 (Just "203-201-9923") Nothing)
         `shouldBe` "{\"name\":\"Peter\",\"age\":34,\"phone\":\"203-201-9923\"}"
 
+      jsonGToLazyByteString personelG
+        (Boss (Person "Peter" 34 Nothing Nothing))
+        `shouldBe` "{\"boss\":{\"name\":\"Peter\",\"age\":34}}"
+
+      jsonGToLazyByteString embPersonelG
+        (Employee (Person "Peter" 34 Nothing Nothing))
+        `shouldBe` "{\"type\":\"employee\",\"name\":\"Peter\",\"age\":34}"
+
     it "should be able to decode a person" do
       jsonGFromLazyByteString personG
         "{\"name\":\"Peter\",\"age\":34}"
@@ -68,6 +98,14 @@ spec = do
       jsonGFromLazyByteString personG
         "{\"name\":\"Peter\",\"age\":34}"
         `shouldBe` Right (Person "Peter" 34 Nothing Nothing)
+
+      jsonGFromLazyByteString personelG
+        "{\"employee\":{\"name\":\"Peter\",\"age\":34}}"
+        `shouldBe` Right (Employee (Person "Peter" 34 Nothing Nothing))
+
+      jsonGFromLazyByteString embPersonelG
+        "{\"type\":\"employee\",\"name\":\"Peter\",\"age\":34}"
+        `shouldBe` Right (Employee (Person "Peter" 34 Nothing Nothing))
 
     it "should be able to decode a tuple" do
       let grm = arrayG "tuple" $ Two anyG anyG

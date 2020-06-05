@@ -35,6 +35,9 @@ import Data.Functor.Contravariant
 -- grammar
 import Control.Grammar.Limits
 
+class HasIso g where
+  iso :: (a -> b) -> (b -> a) -> g b -> g a
+
 -- | A sum grammar
 data SumG t a = HasCoLimit a => SumG
   { sumDesc  :: CoLimit a t
@@ -68,10 +71,12 @@ class HasSumG t g | g -> t where
 instance HasSumG t (SumG t) where
   sumG = SumG
 
-
 -- | A simple sum without explicit order
 simpleSumG :: (HasSumG t g, NatFoldable (CoLimit a), HasCoLimit a) => CoLimit a t -> g a
 simpleSumG colim = sumG colim defaultSumOrder
+
+liftSum :: (HasSumG t g, HasIso g) => t a -> g a
+liftSum = iso Single unSingle . simpleSumG . One
 
 -- | A product grammar
 data ProdG t a = HasLimit a => ProdG
@@ -110,6 +115,16 @@ instance HasProdG t (ProdG t) where
 -- | A simple sum without explicit order
 simpleProdG :: (HasProdG t g, NatTraversable (Limit a), HasLimit a) => Limit a t -> g a
 simpleProdG lim = prodG lim defaultProdOrder
+
+liftProd :: (HasProdG t g, HasIso g) => t a -> g a
+liftProd = iso Single unSingle . simpleProdG . One
+
+
+(<**) :: (HasProdG t g, HasIso g) => t a -> t () -> g a
+(<**) ta tm = iso (\a -> (a, ())) (\(a,()) -> a). simpleProdG $ Two ta tm
+
+(**>) :: (HasProdG t g, HasIso g) => t () -> t a -> g a
+(**>) tm ta = iso (\a -> ((),a)) (\((),a) -> a). simpleProdG $ Two tm ta
 
 oneG :: HasProdG t g => g ()
 oneG = prodG Terminal (\Terminal -> pure ())

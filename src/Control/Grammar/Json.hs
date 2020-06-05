@@ -1,6 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -69,33 +70,59 @@ newtype JsonEncoder a = JsonEncoder { unJsonEncoder :: a -> J.Encoding}
 data JsonG a where
   JsonPrim ::
     JsonDecoder a -> JsonEncoder a -> JsonG a
+  JsonIso ::
+    (a -> b) -> (b -> a) -> JsonG b -> JsonG a
   JsonSumG ::
     SumG JsonG a -> JsonG a
   JsonObjectG ::
-    String -> ProdG JsonKeyG a -> JsonG a
+    String -> JsonKeyG a -> JsonG a
   JsonArrayG  ::
     String -> ProdG JsonG a -> JsonG a
 
+instance HasIso JsonG where
+  iso = JsonIso
+
+instance HasSumG JsonG JsonG where
+  sumG a b = JsonSumG (SumG a b)
+
+
 data JsonKeyG a where
-  JsonKeyG :: Text -> JsonG a -> JsonKeyG a
-  RemovableJsonKeyG :: Text -> JsonG a -> JsonKeyG (Maybe a)
+  JsonKeyG     :: Text -> JsonG a -> JsonKeyG a
+  JsonKeyIsoG  :: (a -> b) -> (b -> a) -> JsonKeyG b -> JsonKeyG a
+  JsonKeySumG  :: SumG JsonKeyG a -> JsonKeyG a
+  JsonKeyProdG :: ProdG JsonKeyG a -> JsonKeyG a
+
+instance HasIso JsonKeyG where
+  iso = JsonKeyIsoG
+
+-- RemovableJsonKeyG :: Text -> JsonG a -> JsonKeyG (Maybe a)
+
+instance HasSumG JsonKeyG JsonKeyG where
+  sumG a b = JsonKeySumG (SumG a b)
+
+instance HasProdG JsonKeyG JsonKeyG where
+  prodG a b = JsonKeyProdG (ProdG a b)
 
 (|=) :: Text -> JsonG a -> JsonKeyG a
 (|=) = JsonKeyG
 
 (?=) :: Text -> JsonG a -> JsonKeyG (Maybe a)
-(?=) = RemovableJsonKeyG
+(?=) a b = maybeG (a |= b) oneG
+
+encodeJsonKeyG :: JsonKeyG a -> a -> J.Series
+encodeJsonKeyG = \case
+  JsonKeyG key g   -> J.pair key . encodeJsonG g
+  JsonKeySumG sum  -> foldSumG encodeJsonKeyG sum
+  JsonKeyProdG sum -> foldProdG encodeJsonKeyG sum
+  JsonKeyIsoG a2b b2a g -> encodeJsonKeyG g . a2b
 
 encodeJsonG :: JsonG a -> a -> Encoding
 encodeJsonG = \case
   JsonSumG sum -> foldSumG encodeJsonG sum
     -- J.pairs . grammarToSeries grm
+  JsonIso a2b b2a g -> encodeJsonG g . a2b
   JsonObjectG _ prod ->
-    J.pairs <$>
-      foldProdG (\case
-        JsonKeyG key g -> J.pair key . encodeJsonG g
-        RemovableJsonKeyG key g -> maybe mempty (J.pair key . encodeJsonG g)
-      ) prod
+    J.pairs <$> encodeJsonKeyG prod
   JsonArrayG _ prod ->
     J.list id <$> foldProdG
       (\t -> (:[]) . encodeJsonG t )
@@ -103,11 +130,19 @@ encodeJsonG = \case
   JsonPrim _ encoder ->
     unJsonEncoder encoder
 
+decodeJsonKeyG :: JsonKeyG a -> J.Object -> J.Parser a
+decodeJsonKeyG = \case
+  JsonKeyG key g   -> flip (explicitParseField (decodeJsonG g)) key
+  JsonKeySumG sum  -> unfoldSumG decodeJsonKeyG sum
+  JsonKeyProdG prod -> unfoldProdG decodeJsonKeyG prod
+  JsonKeyIsoG a2b b2a g -> \a -> b2a <$> decodeJsonKeyG g a
+
 decodeJsonG :: JsonG a -> J.Value -> J.Parser a
 decodeJsonG = \case
   JsonSumG sum -> unfoldSumG decodeJsonG sum
   JsonPrim decoder _ -> unJsonDecoder decoder
-  JsonObjectG name g -> J.withObject name $ unfoldProdG unObject g
+  JsonIso a2b b2a g -> \a -> b2a <$> decodeJsonG g a
+  JsonObjectG name g -> J.withObject name $ decodeJsonKeyG g
   JsonArrayG name g -> J.withArray name $ \arr -> do
     (a, s) <- runStateT (unfoldProdG unArray g ()) (V.toList arr)
     case s of
@@ -115,25 +150,29 @@ decodeJsonG = \case
       a -> fail ("too many items")
 
  where
-  unObject :: JsonKeyG a -> J.Object -> J.Parser a
-  unObject = \case
-    JsonKeyG key p ->
-      maybe empty (decodeJsonG p) . HM.lookup key
-    RemovableJsonKeyG key p ->
-      maybe (pure Nothing) (fmap Just . decodeJsonG p) . HM.lookup key
+  -- unObject :: JsonKeyG a -> J.Object -> J.Parser a
+  -- unObject = \case
+  --   JsonKeyG key p ->
+  --     maybe empty (decodeJsonG p) . HM.lookup key
+  --   RemovableJsonKeyG key p ->
+  --     maybe (pure Nothing) (fmap Just . decodeJsonG p) . HM.lookup key
 
   unArray :: JsonG a -> () -> StateT [J.Value] J.Parser a
   unArray jg () = StateT $ \case
       a:as -> (,as) <$> decodeJsonG jg a
       [] -> fail "too few items"
 
+val :: Value -> JsonG ()
+val v = JsonPrim
+  (JsonDecoder $ \v' -> guard (v' == v))
+  (JsonEncoder $ \() -> J.toEncoding v)
 
 jsonGToLazyByteString :: JsonG a -> a -> BL.ByteString
 jsonGToLazyByteString jg =
   J.encodingToLazyByteString . encodeJsonG jg
 
-objectG :: (NatTraversable (Limit a), HasLimit a) => String -> Limit a JsonKeyG -> JsonG a
-objectG name = JsonObjectG name . simpleProdG
+objectG :: String -> JsonKeyG a -> JsonG a
+objectG name = JsonObjectG name
 
 arrayG :: (NatTraversable (Limit a), HasLimit a) => String -> Limit a JsonG -> JsonG a
 arrayG name = JsonArrayG name . simpleProdG
