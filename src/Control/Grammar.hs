@@ -13,10 +13,12 @@ In contrast to [boomerang], this library tries
 -}
 module Control.Grammar
   ( module Control.Grammar.Prim
-  , module Control.Grammar.Json
   , module Control.Grammar.Limits
+  , module Control.Grammar.Combinators
+  , module Control.Grammar.Builder
   ) where
 
 import Control.Grammar.Prim
-import Control.Grammar.Json
 import Control.Grammar.Limits
+import Control.Grammar.Combinators
+import Control.Grammar.Builder

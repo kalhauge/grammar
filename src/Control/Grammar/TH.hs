@@ -25,6 +25,8 @@ module Control.Grammar.TH where
 import Control.Applicative
 import Control.Monad
 import Data.Char
+import Data.Functor
+import Data.Functor.Compose
 import Data.Foldable
 import Data.Functor.Contravariant
 import Data.Functor.Identity
@@ -37,6 +39,7 @@ import Language.Haskell.TH
 
 -- grammar
 import Control.Grammar.Limits
+import Control.Grammar.Builder
 
 makeLimit :: Name -> DecsQ
 makeLimit ty = do
@@ -45,12 +48,19 @@ makeLimit ty = do
     TyConI (DataD _ dn tp mk cn _) -> do
       fmap concat . forM cn $ \case
         RecC n vt -> do
+          let nsf = NatSimpleForm
+                { nsfName = limName
+                , nsfType1 = limType1
+                , nsfRecords = [  limOnName n | (n, _, t)  <- vt ]
+                }
           sequence
             [ mkData n vt
             , mkHasLimit n vt
-            , mkNatTransformable n vt
-            , mkNatComposable n vt
-            , mkNatTraversable n vt
+            , mkNatTransformable nsf
+            , mkNatTraversable nsf
+            , mkNatComposable nsf
+            , mkNatFoldable nsf
+            , mkAccessible nsf
             ]
         where
           mkData cn vt = do
@@ -92,68 +102,6 @@ makeLimit ty = do
                   []
                 ]
               ]
-
-          mkNatTransformable n vt = do
-            a <- newName "a"
-            nat <- newName "nat"
-            return $ InstanceD Nothing [] (AppT (ConT ''NatTransformable) limType1)
-              [ FunD 'natmap
-                [ Clause
-                  [ VarP nat, VarP a]
-                  ( NormalB
-                    $ RecConE (limConName n)
-                      [ ( limOnName n
-                        , (AppE (VarE nat) (AppE (VarE $ limOnName n) (VarE a)))
-                        )
-                      | (n, _, _) <- vt
-                      ]
-                  )
-                  []
-                ]
-              ]
-
-          mkNatComposable n vt = do
-            a <- newName "a"
-            b <- newName "b"
-            comp <- newName "comp"
-            return $ InstanceD Nothing [] (AppT (ConT ''NatComposable) limType1)
-              [ FunD 'natcomp
-                [ Clause
-                  [ VarP comp, VarP a, VarP b ]
-                  ( NormalB
-                    $ RecConE (limConName n)
-                      [ ( limOnName n
-                        , AppE (AppE (VarE comp) (AppE (VarE $ limOnName n) (VarE a)))
-                            (AppE (VarE $ limOnName n) (VarE b))
-                        )
-                      | (n, _, _) <- vt
-                      ]
-                  )
-                  []
-                ]
-              ]
-
-          mkNatTraversable n vt = do
-            a <- newName "a"
-            return $ InstanceD Nothing [] (AppT (ConT ''NatTraversable) limType1)
-              [ FunD 'natseq
-                [ Clause
-                  [ VarP a ]
-                  ( NormalB
-                    $
-                    foldl' (\a b -> InfixE (Just a) (VarE '(<*>)) (Just b))
-                      (AppE (VarE 'pure) (ConE limName))
-                    [ InfixE
-                        (Just $ ConE 'Identity)
-                        (VarE '(<$>))
-                        (Just $ AppE (VarE (limOnName n)) (VarE a))
-                    | (n, _, _) <- vt
-                    ]
-                  )
-                  []
-                ]
-              ]
-
           limOnName n = mkName ("on" ++ capitalize (nameBase n))
           limConName cn = mkName (nameBase cn ++ "Lim")
           limName = mkName (nameBase dn ++ "Lim")
@@ -169,12 +117,19 @@ makeCoLimit ty = do
   t <- reify ty
   case t of
     TyConI (DataD _ dn tp mk cn _) -> do
+      let nsf = NatSimpleForm
+            { nsfName = colimName
+            , nsfType1 = colimType1
+            , nsfRecords = [ mkName ("if" ++ nameBase n) | NormalC n _  <- cn ]
+            }
       sequence
         [ mkData cn
         , mkHasCoLimit cn
-        , mkNatTransformable cn
-        , mkNatComposable cn
-        , mkNatFoldable cn
+        , mkNatTransformable nsf
+        , mkNatTraversable nsf
+        , mkNatComposable nsf
+        , mkNatFoldable nsf
+        , mkAccessible nsf
         ]
       where
         mkData cns = do
@@ -227,65 +182,128 @@ makeCoLimit ty = do
               ]
             ]
 
-        mkNatTransformable cns = do
-          a <- newName "a"
-          nat <- newName "nat"
-          return $ InstanceD Nothing [] (AppT (ConT ''NatTransformable) colimType1)
-            [ FunD 'natmap
-              [ Clause
-                [ VarP nat, VarP a]
-                ( NormalB
-                  $ RecConE colimName
-                    [ ( colimIfName cn
-                      , (AppE (VarE nat) (AppE (VarE $ colimIfName cn) (VarE a)))
-                      )
-                    | NormalC cn x <- cns
-                    ]
-                )
-                []
-              ]
-            ]
-
-        mkNatComposable cns = do
-          a <- newName "a"
-          b <- newName "b"
-          comp <- newName "comp"
-          return $ InstanceD Nothing [] (AppT (ConT ''NatComposable) colimType1)
-            [ FunD 'natcomp
-              [ Clause
-                [ VarP comp, VarP a, VarP b ]
-                ( NormalB
-                  $ RecConE colimName
-                    [ ( colimIfName cn
-                      , AppE (AppE (VarE comp) (AppE (VarE $ colimIfName cn) (VarE a)))
-                          (AppE (VarE $ colimIfName cn) (VarE b))
-                      )
-                    | NormalC cn x <- cns
-                    ]
-                )
-                []
-              ]
-            ]
-
-        mkNatFoldable cns = do
-          a <- newName "a"
-          return $ InstanceD Nothing [] (AppT (ConT ''NatFoldable) colimType1)
-            [ FunD 'natfold
-              [ Clause
-                [ VarP a ]
-                ( NormalB
-                  $
-                  foldl' (\a b -> InfixE (Just a) (VarE '(<>)) (Just b))
-                    (VarE 'mempty)
-                  [ AppE (VarE 'getConst) (AppE (VarE (colimIfName cn)) (VarE a))
-                  | NormalC cn x <- cns
-                  ]
-                )
-                []
-              ]
-            ]
-
 
         colimIfName n = mkName ("if" ++ nameBase n)
         colimName = mkName (nameBase dn ++ "CoLim")
         colimType1 = ConT colimName
+
+
+data NatSimpleForm = NatSimpleForm
+  { nsfName :: Name
+  , nsfType1 :: Type
+  , nsfRecords :: [Name]
+  }
+
+
+mkNatFoldable :: NatSimpleForm -> Q Dec
+mkNatFoldable NatSimpleForm {..} = do
+  a <- newName "a"
+  return $ InstanceD
+    Nothing
+    []
+    (AppT (ConT ''NatFoldable) nsfType1)
+    [ FunD
+        'natfold
+        [ Clause
+            [VarP a]
+            (NormalB $ foldl'
+              (\a b -> InfixE (Just a) (VarE '(<>)) (Just b))
+              (VarE 'mempty)
+              [ AppE (VarE 'getConst) (AppE (VarE cn) (VarE a))
+              | cn <- nsfRecords
+              ]
+            )
+            []
+        ]
+    ]
+
+mkNatTransformable NatSimpleForm {..} = do
+  a <- newName "a"
+  nat <- newName "nat"
+  return $ InstanceD Nothing [] (AppT (ConT ''NatTransformable) nsfType1)
+    [ FunD 'natmap
+      [ Clause
+        [ VarP nat, VarP a]
+        ( NormalB
+          $ RecConE nsfName
+            [ ( cn
+              , (AppE (VarE nat) (AppE (VarE cn) (VarE a)))
+              )
+            | cn <- nsfRecords
+            ]
+        )
+        []
+      ]
+    ]
+
+mkNatComposable NatSimpleForm {..} = do
+  a <- newName "a"
+  b <- newName "b"
+  comp <- newName "comp"
+  return $ InstanceD Nothing [] (AppT (ConT ''NatComposable) nsfType1)
+    [ FunD 'natcomp
+      [ Clause
+        [ VarP comp, VarP a, VarP b ]
+        ( NormalB
+          $ RecConE nsfName
+            [ ( cn
+              , AppE (AppE (VarE comp) (AppE (VarE cn) (VarE a)))
+                  (AppE (VarE cn) (VarE b))
+              )
+            | cn <- nsfRecords
+            ]
+        )
+        []
+      ]
+    ]
+
+mkNatTraversable NatSimpleForm {..} = do
+  a <- newName "a"
+  b <- newName "b"
+  comp <- newName "comp"
+  return $ InstanceD Nothing [] (AppT (ConT ''NatTraversable) nsfType1)
+    [ FunD 'natseq
+      [ Clause
+          [VarP a]
+          (NormalB $ foldl'
+            (\a b -> InfixE (Just a) (VarE '(<*>)) (Just b))
+            (AppE (VarE 'pure) (ConE nsfName))
+            [ AppE (VarE 'getCompose) (AppE (VarE cn) (VarE a))
+            | cn <- nsfRecords
+            ]
+          )
+          []
+      ]
+    ]
+
+mkAccessible NatSimpleForm {..} = do
+  a <- newName "a"
+  b <- newName "b"
+  fn <- newName "fn"
+  s <- newName "s"
+  comp <- newName "comp"
+  return $ InstanceD Nothing [] (AppT (ConT ''Accessible) nsfType1)
+    [ FunD 'accessors
+      [ Clause
+        [ ]
+        ( NormalB
+          $ RecConE nsfName
+            [ (cn
+              , AppE (ConE 'Accessor)
+              . LamE [VarP  fn, VarP s]
+              $ AppE
+                (AppE (VarE 'fmap)
+                  (LamE [VarP (mkName "a")]
+                    ( RecUpdE (VarE s)
+                      [ (cn, VarE (mkName ("a"))) ]
+                    )
+                  )
+                )
+                (AppE (VarE fn) (AppE (VarE cn) (VarE s)))
+              )
+              | cn <- nsfRecords
+            ]
+        )
+        []
+      ]
+    ]

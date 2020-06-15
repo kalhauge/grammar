@@ -1,6 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GADTs #-}
@@ -25,6 +26,7 @@ import Data.Void
 import Data.Monoid
 import Control.Applicative
 import Data.Functor.Identity
+import Data.Functor.Compose
 
 -- adjunctions
 import Data.Functor.Contravariant.Rep
@@ -37,7 +39,7 @@ class NatComposable n where
   -- natcomp :: n f -> n g -> n (Product f g)
 
 class NatTraversable n where
-  natseq :: Applicative f => n f -> f (n Identity)
+  natseq :: Applicative f => n (Compose f g) -> f (n g)
 
 class NatFoldable n where
   natfold :: Monoid m => n (Const m) -> m
@@ -54,7 +56,7 @@ class (NatTransformable (Limit a), NatComposable (Limit a)) => HasLimit a where
 
 
 newtype Single a = Single { unSingle :: a }
-data One a f = One (f a)
+data One a f = One { onEvery ::  f a }
 
 instance NatTransformable (One a) where
   natmap nat (One a) = One (nat a)
@@ -63,10 +65,15 @@ instance NatComposable (One a) where
   natcomp comp (One a) (One b)  = One (a `comp` b)
 
 instance NatTraversable (One a) where
-  natseq (One a) = One . Identity <$> a
+  natseq (One a) = One <$> getCompose a
 
 instance NatFoldable (One a) where
   natfold (One (Const a)) = a
+
+-- instance HasLimit a where
+--   type Limit a = One a
+--   extract = One (\(Single a) -> a)
+--   inject (One a) b = Single (a b)
 
 instance HasLimit (Single a) where
   type Limit (Single a) = One a
@@ -79,31 +86,31 @@ instance HasCoLimit (Single a) where
   interpret (One (Op f)) (Single b) = f b
 
 data Two a b f = Two
-  { noOne :: f a
-  , noTwo :: f b
+  { onOne :: f a
+  , onTwo :: f b
   }
 
 instance NatTransformable (Two a b) where
   natmap nat Two {..} = Two
-    { noOne = nat noOne
-    , noTwo = nat noTwo
+    { onOne = nat onOne
+    , onTwo = nat onTwo
     }
 
 instance NatComposable (Two a b) where
   natcomp comp a b  = Two
-    { noOne = noOne a `comp` noOne b
-    , noTwo = noTwo a `comp` noTwo b
+    { onOne = onOne a `comp` onOne b
+    , onTwo = onTwo a `comp` onTwo b
     }
 
 instance NatTraversable (Two a b) where
   natseq a = Two
-    <$> (Identity <$> noOne a)
-    <*> (Identity <$> noTwo a)
+    <$> (getCompose $ onOne a)
+    <*> (getCompose $ onTwo a)
 
 instance HasLimit (a, b) where
   type Limit (a, b) = Two a b
   extract = Two fst snd
-  inject Two {..} b = (noOne b, noTwo b)
+  inject Two {..} b = (onOne b, onTwo b)
 
 data CoEither a b f = CoEither
   { ifLeft  :: f a
@@ -115,11 +122,16 @@ instance NatTransformable (CoEither a b) where
     { ifLeft = nat ifLeft
     , ifRight = nat ifRight
     }
+
 instance NatComposable (CoEither a b) where
   natcomp comp a b = CoEither
     { ifLeft  = ifLeft a  `comp` ifLeft b
     , ifRight = ifRight a `comp` ifRight b
     }
+
+instance NatTraversable (CoEither a b) where
+  natseq CoEither {..} =
+    CoEither <$> getCompose ifLeft <*> getCompose ifRight
 
 instance HasCoLimit (Either a b) where
   type CoLimit (Either a b) = CoEither a b
@@ -149,6 +161,11 @@ instance NatComposable (CoMaybe a) where
     { ifJust    = ifJust a    `comp` ifJust b
     , ifNothing = ifNothing a `comp` ifNothing b
     }
+
+instance NatTraversable (CoMaybe a) where
+  natseq CoMaybe {..} =
+    CoMaybe <$> getCompose ifJust <*> getCompose ifNothing
+
 
 instance NatFoldable (CoMaybe a) where
   natfold (CoMaybe a b) = getConst a <> getConst b

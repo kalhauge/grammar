@@ -56,8 +56,7 @@ import Data.Aeson.Internal as J
 import qualified Data.HashMap.Strict as HM
 
 -- grammar
-import Control.Grammar.Prim
-import Control.Grammar.Limits
+import Control.Grammar
 
 newtype JsonDecoder a = JsonDecoder { unJsonDecoder :: J.Value -> J.Parser a }
   deriving Functor
@@ -83,7 +82,7 @@ instance HasIso JsonG where
   iso = JsonIso
 
 instance HasSumG JsonG JsonG where
-  sumG a b = JsonSumG (SumG a b)
+  sumG g = JsonSumG (SumG g)
 
 
 data JsonKeyG a where
@@ -98,16 +97,19 @@ instance HasIso JsonKeyG where
 -- RemovableJsonKeyG :: Text -> JsonG a -> JsonKeyG (Maybe a)
 
 instance HasSumG JsonKeyG JsonKeyG where
-  sumG a b = JsonKeySumG (SumG a b)
+  sumG g = JsonKeySumG $ SumG g
 
 instance HasProdG JsonKeyG JsonKeyG where
-  prodG a b = JsonKeyProdG (ProdG a b)
+  prodG g = JsonKeyProdG (ProdG g)
 
 (|=) :: Text -> JsonG a -> JsonKeyG a
 (|=) = JsonKeyG
 
 (?=) :: Text -> JsonG a -> JsonKeyG (Maybe a)
 (?=) a b = maybeG (a |= b) oneG
+
+(<:=) :: String -> JsonKeyG a -> JsonG a
+(<:=) = objectG
 
 encodeJsonKeyG :: JsonKeyG a -> a -> J.Series
 encodeJsonKeyG = \case
@@ -175,7 +177,7 @@ objectG :: String -> JsonKeyG a -> JsonG a
 objectG name = JsonObjectG name
 
 arrayG :: (NatTraversable (Limit a), HasLimit a) => String -> Limit a JsonG -> JsonG a
-arrayG name = JsonArrayG name . simpleProdG
+arrayG name = JsonArrayG name . defP
 
 nullG :: JsonG ()
 nullG = JsonPrim

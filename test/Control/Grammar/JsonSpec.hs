@@ -36,7 +36,7 @@ personG :: JsonG Person
 personG = objectG "Person" personKG
 
 personKG :: JsonKeyG Person
-personKG = simpleProdG PersonLim
+personKG = defP PersonLim
   { onPersonName =
       "name"   |= textG
   , onPersonAge =
@@ -48,23 +48,34 @@ personKG = simpleProdG PersonLim
   }
 
 data Personel
-  = Boss Person
+  = Boss (Int, Person)
   | Employee Person
   deriving (Show, Eq)
 
 $(makeCoLimit ''Personel)
 
 personelG :: JsonG Personel
-personelG = simpleSumG $ PersonelCoLim
-  { ifBoss = objectG "Boss" ("boss" |= personG)
-  , ifEmployee = objectG "Employee" ("employee" |= personG)
-  }
+personelG = buildSum \PersonelCoLim {..} ->
+  [ ifBoss =: objectG "Boss"
+    (("golden" |= intG)
+      <**> ("boss" |= personG)
+    )
+  , ifEmployee =: objectG "Employee"
+    ( "employee" |= personG )
+  ]
 
 embPersonelG :: JsonG Personel
-embPersonelG = objectG "Personel" . simpleSumG $ PersonelCoLim
-  { ifBoss = ("type" |= val "boss") **> personKG
-  , ifEmployee = ("type" |= val "employee") **> personKG
-  }
+embPersonelG = objectG "Personel" $ buildSum \PersonelCoLim {..} ->
+  [ ifBoss =* \s Two {..} ->
+    [ s $ "dtype" |= val "boss"
+    , onOne =: "golden" |= intG
+    , onTwo =: personKG
+    ]
+  , ifEmployee =*! \s (One onEvery) ->
+    [ s $ "dtype" |= val "employee"
+    , onEvery =: personKG
+    ]
+  ]
 
 spec :: Spec
 spec = do
@@ -79,12 +90,12 @@ spec = do
         `shouldBe` "{\"name\":\"Peter\",\"age\":34,\"phone\":\"203-201-9923\"}"
 
       jsonGToLazyByteString personelG
-        (Boss (Person "Peter" 34 Nothing Nothing))
-        `shouldBe` "{\"boss\":{\"name\":\"Peter\",\"age\":34}}"
+        (Boss (10, Person "Peter" 34 Nothing Nothing))
+        `shouldBe` "{\"golden\":10,\"boss\":{\"name\":\"Peter\",\"age\":34}}"
 
       jsonGToLazyByteString embPersonelG
         (Employee (Person "Peter" 34 Nothing Nothing))
-        `shouldBe` "{\"type\":\"employee\",\"name\":\"Peter\",\"age\":34}"
+        `shouldBe` "{\"dtype\":\"employee\",\"name\":\"Peter\",\"age\":34}"
 
     it "should be able to decode a person" do
       jsonGFromLazyByteString personG
@@ -104,7 +115,7 @@ spec = do
         `shouldBe` Right (Employee (Person "Peter" 34 Nothing Nothing))
 
       jsonGFromLazyByteString embPersonelG
-        "{\"type\":\"employee\",\"name\":\"Peter\",\"age\":34}"
+        "{\"dtype\":\"employee\",\"name\":\"Peter\",\"age\":34}"
         `shouldBe` Right (Employee (Person "Peter" 34 Nothing Nothing))
 
     it "should be able to decode a tuple" do

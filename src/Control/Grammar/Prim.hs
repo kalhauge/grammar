@@ -26,163 +26,107 @@ module Control.Grammar.Prim
 
 -- base
 import Data.Functor.Identity
+import Data.Functor.Compose
 import Data.Maybe
 import Data.Void
 import Data.Monoid
 import Control.Applicative
 import Data.Functor.Contravariant
 
+import Control.Monad.State
+import Control.Monad.Writer
+
 -- grammar
 import Control.Grammar.Limits
+
+-- | A Patial Isomorphism Description
+newtype Desc t f g a = Desc
+  { (<:) :: t a -> f (g a) }
+
+type SumCon t l =
+  (forall f g. Applicative f => l (Desc t f g) -> f (l g))
+
+data SumG t a = HasCoLimit a => SumG (SumCon t (CoLimit a))
+
+sumDesc :: forall a t. SumG t a -> CoLimit a t
+sumDesc (SumG runSum) =
+  runIdentity $ runSum
+    (natmap (const $ Desc (\ta -> Identity ta)) (construct @a))
+
+sumOrder :: forall f a t. Alternative f => SumG t a -> CoLimit a f -> f a
+sumOrder (SumG runSum) clim =
+  getAlt . getConst $ runSum (natcomp comp clim construct)
+ where comp a (Op op) = Desc . const . Const . Alt $ op <$> a
+
+foldSumG   :: (forall b. t b -> b ->  m) -> SumG t a -> a -> m
+foldSumG compress s@(SumG _) =
+  interpret $ natmap (Op . compress) (sumDesc s)
+
+unfoldSumG :: Alternative f => (forall b. t b -> m -> f b) -> SumG t a -> m -> f a
+unfoldSumG expand s@(SumG _) m =
+  sumOrder s (natmap (\tb -> expand tb m) (sumDesc s))
+
+inspectSumG :: (forall b. t b -> m) -> SumG t a -> [m]
+inspectSumG inspect s@(SumG _) =
+  getOver $ (sumOrder s) (natmap (Over . (:[]) . inspect) (sumDesc s))
+
+type ProdCon t l =
+  (forall f g. Applicative f => (t () -> f ()) -> l (Desc t f g) -> f (l g))
+
+data ProdG t a = HasLimit a => ProdG (ProdCon t (Limit a))
+
+prodDesc :: forall a t. ProdG t a -> Limit a t
+prodDesc (ProdG runProd) =
+  runIdentity $ runProd (\_ -> Identity ())
+    (natmap (const $ Desc (\ta -> Identity ta)) (extract @a))
+
+foldProdG :: forall a t m. Monoid m
+  => (forall b. t b -> b -> m)
+  -> ProdG t a
+  -> a -> m
+foldProdG compress (ProdG runProd) a =
+  getConst $ runProd include' (natmap toM extract)
+
+ where
+   include' :: t () -> Const m ()
+   include' t' = Const $ compress t' ()
+
+   toM :: (a -> b) -> Desc t (Const m) g b
+   toM getb = Desc (\t -> Const $ compress t (getb a))
+
+unfoldProdG :: forall a t f m. Applicative f
+  => (forall b. t b -> m -> f b)
+  -> ProdG t a
+  -> m
+  -> f a
+unfoldProdG expand (ProdG runProd) m = do
+  x <- runProd (\t' -> expand t' m)
+    (natmap (\_ -> Desc \tb -> const <$> expand tb m) (extract @a))
+  pure $ inject x ()
+
+inspectProdG :: forall a t m.
+  (forall b. t b -> m)
+  -> ProdG t a
+  -> [m]
+inspectProdG inspect (ProdG runProd) = do
+  getConst $ runProd (Const . (:[]) . inspect)
+    (natmap (\_ -> Desc \tb -> Const $ [inspect tb]) (extract @a))
+
 
 class HasIso g where
   iso :: (a -> b) -> (b -> a) -> g b -> g a
 
--- | A sum grammar
-data SumG t a = HasCoLimit a => SumG
-  { sumDesc  :: CoLimit a t
-    -- ^ The description of the sum.
-  , sumOrder :: forall f. Alternative f => CoLimit a f -> f a
-    -- ^ The order of the sum; not all grammars are commutative.
-  }
-
-foldSumG   :: (forall b. t b -> b ->  m) -> SumG t a -> a -> m
-foldSumG compress (SumG {..}) =
-  interpret $ natmap (Op . compress) sumDesc
-
-unfoldSumG :: Alternative f => (forall b. t b -> m -> f b) -> SumG t a -> m -> f a
-unfoldSumG expand (SumG {..}) m =
-  sumOrder (natmap (\tb -> expand tb m) sumDesc)
-
-inspectSumG :: (forall b. t b -> m) -> SumG t a -> [m]
-inspectSumG inspect (SumG {..}) =
-  getOver $ sumOrder (natmap (Over . (:[]) . inspect) sumDesc)
-
-defaultSumOrder :: (HasCoLimit a, NatFoldable (CoLimit a), Alternative f) => CoLimit a f -> f a
-defaultSumOrder =
-  getAlt . natfold . natcomp (\(Op op) -> Const . Alt . fmap op) construct
-
 class HasSumG t g | g -> t where
-  sumG :: HasCoLimit a
-    => CoLimit a t
-    -> (forall f. Alternative f => CoLimit a f -> f a)
-    -> g a
+  sumG :: HasCoLimit a => SumCon t (CoLimit a) -> g a
 
 instance HasSumG t (SumG t) where
   sumG = SumG
 
--- | A simple sum without explicit order
-simpleSumG :: (HasSumG t g, NatFoldable (CoLimit a), HasCoLimit a) => CoLimit a t -> g a
-simpleSumG colim = sumG colim defaultSumOrder
-
-liftSum :: (HasSumG t g, HasIso g) => t a -> g a
-liftSum = iso Single unSingle . simpleSumG . One
-
--- | A product grammar
-data ProdG t a = HasLimit a => ProdG
-  { prodDesc  :: Limit a t
-    -- ^ The description of the product.
-  , prodOrder :: forall f. Applicative f => Limit a f -> f a
-    -- ^ The order of the product; not all grammars are commutative.
-  }
-
-foldProdG :: Monoid m => (forall b. t b -> b -> m) -> ProdG t a -> a -> m
-foldProdG compress (ProdG {..}) =
-  getConst . prodOrder $ natcomp (\fa gm -> Const $ compress gm <$> fa) extract prodDesc
-
-unfoldProdG :: Applicative f => (forall b. t b -> m -> f b) -> ProdG t a -> m -> f a
-unfoldProdG expand (ProdG {..}) m =
-  prodOrder (natmap (\tb -> expand tb m) prodDesc)
-
-
-inspectProdG :: (forall b. t b -> m) -> ProdG t a -> [m]
-inspectProdG inspect (ProdG {..}) =
-  getOver $ prodOrder (natmap (Over . (:[]) . inspect) prodDesc)
-
-defaultProdOrder :: (HasLimit a, NatTraversable (Limit a), Applicative f) => Limit a f -> f a
-defaultProdOrder lim =
-  ($ ()). inject . natmap (const . runIdentity) <$> natseq lim
-
 class HasProdG t g | g -> t where
-  prodG :: HasLimit a
-    => Limit a t
-    -> (forall f. Applicative f => Limit a f -> f a)
-    -> g a
+  prodG :: HasLimit a => ProdCon t (Limit a) -> g a
 
 instance HasProdG t (ProdG t) where
   prodG = ProdG
-
--- | A simple sum without explicit order
-simpleProdG :: (HasProdG t g, NatTraversable (Limit a), HasLimit a) => Limit a t -> g a
-simpleProdG lim = prodG lim defaultProdOrder
-
-liftProd :: (HasProdG t g, HasIso g) => t a -> g a
-liftProd = iso Single unSingle . simpleProdG . One
-
-
-(<**) :: (HasProdG t g, HasIso g) => t a -> t () -> g a
-(<**) ta tm = iso (\a -> (a, ())) (\(a,()) -> a). simpleProdG $ Two ta tm
-
-(**>) :: (HasProdG t g, HasIso g) => t () -> t a -> g a
-(**>) tm ta = iso (\a -> ((),a)) (\((),a) -> a). simpleProdG $ Two tm ta
-
-oneG :: HasProdG t g => g ()
-oneG = prodG Terminal (\Terminal -> pure ())
-
-zeroG :: HasSumG t g => g Void
-zeroG = sumG Terminal (const empty)
-
-tupleG :: HasProdG t g => t a -> t b -> g (a, b)
-tupleG ag bg = simpleProdG (Two ag bg)
-
-maybeG :: HasSumG t g => t a -> t () -> g (Maybe a)
-maybeG as bs = simpleSumG (CoMaybe as bs)
---
--- emptyG :: Grammar t ()
--- emptyG = ProdG (\(Terminal ()) -> pure (Terminal ())) (Terminal ())
---
--- simpleProdG ::
---     (HasLimit a, NatTraversable (Limit a))
---     => Limit a (Grammar t)
---     -> Grammar t a
--- simpleProdG = ProdG natseq
---
--- withDefaultG :: a -> Grammar t (Maybe a) -> Grammar t a
--- withDefaultG a = IsoG (fromMaybe a) Just
---
--- foldGrammar :: forall t m a. Monoid m => (forall a. t a -> a -> m) -> Grammar t a -> a -> m
--- foldGrammar ta = go where
---   go :: forall a. Grammar t a -> a -> m
---   go = \case
---     Prim t ->
---       ta t
---     IsoG a2b b2a t ->
---       foldGrammar ta t . b2a
---     SumG _ co ->
---       interpret $ natmap (Op . go) co
---     ProdG fold co ->
---       getConst . fold $ natcomp (\fa gm -> Const $ go gm <$> fa) extract co
---
---
--- unfoldGrammar :: Alternative g => (forall a. t a -> g a) -> Grammar t a -> g a
--- unfoldGrammar ta = \case
---   Prim t ->
---     ta t
---   IsoG a2b b2a t ->
---     a2b <$> unfoldGrammar ta t
---   SumG fold co ->
---     getAlt . getConst $ fold
---        (natcomp (\op grm -> Const . Alt $ getOp op <$> unfoldGrammar ta grm)
---          construct co
---        )
---   ProdG unfold co -> do
---     x <- unfold (natmap (unfoldGrammar ta) co)
---     pure $ inject (natmap (const . runIdentity) x) ()
-
---
---   ProdG unfold co -> do
---     x <- unfold (natmap gFromJSON co)
---     pure $ inject (natmap (const . runIdentity) x) ()
 
 -- | Helper overapproximation
 newtype Over m b = Over { getOver :: m }
