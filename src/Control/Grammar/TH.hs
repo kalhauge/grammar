@@ -141,7 +141,8 @@ makeCoLimit ty = do
                 , case x of
                     []   -> AppT (VarT f') (ConT ''())
                     (_,a):[] -> AppT (VarT f') a
-                    _ -> error "not suported yet"
+                    as -> AppT (VarT f') $
+                      (foldl AppT (TupleT (length as)) [ x | (_,x) <- as ])
                 )
               | NormalC cn x <- cns
               ]
@@ -179,7 +180,7 @@ makeCoLimit ty = do
                     [ ( colimIfName cn, (AppE (ConE 'Op) (LamE [TupP [VarP v | v <- vx]]
                         case vx of
                           [] -> ConE cn
-                          _ -> (AppE (ConE cn) (TupE [VarE v | v <- vx]))
+                          _ -> (foldl AppE (ConE cn) [VarE v | v <- vx])
                       )))
                     | NormalC cn x <- cns
                     , let vx = zipWith const rs x

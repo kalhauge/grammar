@@ -48,7 +48,7 @@ personKG = defP PersonLim
   }
 
 data Personel
-  = Boss (Int, Person)
+  = Boss Int Person
   | Employee Person
   | Plant
   deriving (Show, Eq)
@@ -94,7 +94,7 @@ spec = do
         `shouldBe` "{\"name\":\"Peter\",\"age\":34,\"phone\":\"203-201-9923\"}"
 
       jsonGToLazyByteString personelG
-        (Boss (10, Person "Peter" 34 Nothing Nothing))
+        (Boss 10 (Person "Peter" 34 Nothing Nothing))
         `shouldBe` "{\"golden\":10,\"boss\":{\"name\":\"Peter\",\"age\":34}}"
 
       jsonGToLazyByteString embPersonelG

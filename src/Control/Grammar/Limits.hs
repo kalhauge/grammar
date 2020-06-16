@@ -112,6 +112,41 @@ instance HasLimit (a, b) where
   extract = Two fst snd
   inject Two {..} b = (onOne b, onTwo b)
 
+data Three a b c f = Three
+  { onOneOfThree :: f a
+  , onTwoOfThree :: f b
+  , onThreeOfThree :: f c
+  }
+
+instance NatTransformable (Three a b c) where
+  natmap nat Three {..} = Three
+    { onOneOfThree = nat onOneOfThree
+    , onTwoOfThree = nat onTwoOfThree
+    , onThreeOfThree = nat onThreeOfThree
+    }
+
+instance NatComposable (Three a b c) where
+  natcomp comp a b  = Three
+    { onOneOfThree = onOneOfThree a `comp` onOneOfThree b
+    , onTwoOfThree = onTwoOfThree a `comp` onTwoOfThree b
+    , onThreeOfThree = onThreeOfThree a `comp` onThreeOfThree b
+    }
+
+instance NatTraversable (Three a b c) where
+  natseq a = Three
+    <$> (getCompose $ onOneOfThree a)
+    <*> (getCompose $ onTwoOfThree a)
+    <*> (getCompose $ onThreeOfThree a)
+
+instance HasLimit (a, b, c) where
+  type Limit (a, b, c) = Three a b c
+  extract = Three (\(a,_,_) -> a) (\(_,b,_) -> b) (\(_,_,c) -> c)
+  inject Three {..} b = (onOneOfThree b, onTwoOfThree b, onThreeOfThree b)
+
+
+
+
+
 data CoEither a b f = CoEither
   { ifLeft  :: f a
   , ifRight :: f b
