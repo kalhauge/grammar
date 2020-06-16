@@ -139,7 +139,7 @@ makeCoLimit ty = do
               [ ( colimIfName cn
                 , Bang NoSourceUnpackedness NoSourceStrictness
                 , case x of
-                    []   -> AppT (VarT f') (VarT '())
+                    []   -> AppT (VarT f') (ConT ''())
                     (_,a):[] -> AppT (VarT f') a
                     _ -> error "not suported yet"
                 )
@@ -150,7 +150,7 @@ makeCoLimit ty = do
         mkHasCoLimit cns = do
           cl <- newName "cl"
           a <- newName "a"
-          r <- newName "r"
+          rs <- replicateM 10 (newName "r")
           return $ InstanceD Nothing [] (AppT (ConT ''HasCoLimit) (ConT dn))
             [ TySynInstD (TySynEqn Nothing (AppT (ConT ''CoLimit) (ConT dn)) colimType1)
             , FunD 'interpret
@@ -159,12 +159,14 @@ makeCoLimit ty = do
                 ( NormalB
                   $ CaseE (VarE a)
                     [ Match
-                        (ConP cn [VarP r])
+                        (ConP cn [VarP v | v <- vx ])
                         (NormalB (AppE
                           (AppE (VarE 'index) (AppE (VarE (colimIfName cn)) (VarE cl)))
-                          (VarE r)))
+                          (TupE (map VarE vx))
+                          ))
                         []
                     | NormalC cn x <- cns
+                    , let vx = zipWith const rs x
                     ]
                 )
                 []
@@ -174,8 +176,13 @@ makeCoLimit ty = do
                 []
                 ( NormalB
                   $ RecConE colimName
-                    [ ( colimIfName cn, (AppE (ConE 'Op) (ConE cn)) )
-                    | NormalC cn t <- cns
+                    [ ( colimIfName cn, (AppE (ConE 'Op) (LamE [TupP [VarP v | v <- vx]]
+                        case vx of
+                          [] -> ConE cn
+                          _ -> (AppE (ConE cn) (TupE [VarE v | v <- vx]))
+                      )))
+                    | NormalC cn x <- cns
+                    , let vx = zipWith const rs x
                     ]
                 )
                 []

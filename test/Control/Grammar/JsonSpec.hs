@@ -50,6 +50,7 @@ personKG = defP PersonLim
 data Personel
   = Boss (Int, Person)
   | Employee Person
+  | Plant
   deriving (Show, Eq)
 
 $(makeCoLimit ''Personel)
@@ -62,6 +63,8 @@ personelG = buildSum \PersonelCoLim {..} ->
     )
   , ifEmployee =: objectG "Employee"
     ( "employee" |= personG )
+  , ifPlant =: objectG "Employee"
+    ( "plant" |= nullG )
   ]
 
 embPersonelG :: JsonG Personel
@@ -75,6 +78,7 @@ embPersonelG = objectG "Personel" $ buildSum \PersonelCoLim {..} ->
     [ s $ "dtype" |= val "employee"
     , onEvery =: personKG
     ]
+  , ifPlant =: "dtype" |= val "plant"
   ]
 
 spec :: Spec
