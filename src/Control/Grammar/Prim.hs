@@ -37,6 +37,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 
 -- grammar
+import Control.Grammar.Natural
 import Control.Grammar.Limits
 
 -- | A Patial Isomorphism Description
@@ -51,24 +52,29 @@ data SumG t a = HasCoLimit a => SumG (SumCon t (CoLimit a))
 sumDesc :: forall a t. SumG t a -> CoLimit a t
 sumDesc (SumG runSum) =
   runIdentity $ runSum
-    (natmap (const $ Desc (\ta -> Identity ta)) (construct @a))
+    (natMap (const $ Desc (\ta -> Identity ta)) (construct @a))
 
-sumOrder :: forall f a t. Alternative f => SumG t a -> CoLimit a f -> f a
-sumOrder (SumG runSum) clim =
-  getAlt . getConst $ runSum (natcomp comp clim construct)
- where comp a (Op op) = Desc . const . Const . Alt $ op <$> a
+-- sumOrder :: forall f a t. Alternative f => SumG t a -> CoLimit a f -> f a
+-- sumOrder (SumG runSum) clim =
+--   getAlt . getConst $ runSum (help clim comp construct)
+--  where
+--   help :: CoLimit a f -> _ -> CoLimit t (Op t) -> a (Desc t f g)
+--   help = undefined
+--
+--   comp :: _
+--   comp a (Op op) = Desc . const . Const . Alt $ op <$> a
 
 foldSumG   :: (forall b. t b -> b ->  m) -> SumG t a -> a -> m
 foldSumG compress s@(SumG _) =
-  interpret $ natmap (Op . compress) (sumDesc s)
+  interpret $ natMap (Op . compress) (sumDesc s)
 
-unfoldSumG :: Alternative f => (forall b. t b -> m -> f b) -> SumG t a -> m -> f a
-unfoldSumG expand s@(SumG _) m =
-  sumOrder s (natmap (\tb -> expand tb m) (sumDesc s))
+-- unfoldSumG :: Alternative f => (forall b. t b -> m -> f b) -> SumG t a -> m -> f a
+-- unfoldSumG expand s@(SumG _) m =
+--   sumOrder s (natMap (\tb -> expand tb m) (sumDesc s))
 
-inspectSumG :: (forall b. t b -> m) -> SumG t a -> [m]
-inspectSumG inspect s@(SumG _) =
-  getOver $ (sumOrder s) (natmap (Over . (:[]) . inspect) (sumDesc s))
+-- inspectSumG :: (forall b. t b -> m) -> SumG t a -> [m]
+-- inspectSumG inspect s@(SumG _) =
+--   getOver $ (sumOrder s) (natMap (Over . (:[]) . inspect) (sumDesc s))
 
 type ProdCon t l =
   (forall f g. Applicative f => (t () -> f ()) -> l (Desc t f g) -> f (l g))
@@ -78,14 +84,14 @@ data ProdG t a = HasLimit a => ProdG (ProdCon t (Limit a))
 prodDesc :: forall a t. ProdG t a -> Limit a t
 prodDesc (ProdG runProd) =
   runIdentity $ runProd (\_ -> Identity ())
-    (natmap (const $ Desc (\ta -> Identity ta)) (extract @a))
+    (natMap (const $ Desc (\ta -> Identity ta)) (extract @a))
 
 foldProdG :: forall a t m. Monoid m
   => (forall b. t b -> b -> m)
   -> ProdG t a
   -> a -> m
 foldProdG compress (ProdG runProd) a =
-  getConst $ runProd include' (natmap toM extract)
+  getConst $ runProd include' (natMap toM extract)
 
  where
    include' :: t () -> Const m ()
@@ -101,7 +107,7 @@ unfoldProdG :: forall a t f m. Applicative f
   -> f a
 unfoldProdG expand (ProdG runProd) m = do
   x <- runProd (\t' -> expand t' m)
-    (natmap (\_ -> Desc \tb -> const <$> expand tb m) (extract @a))
+    (natMap (\_ -> Desc \tb -> const <$> expand tb m) (extract @a))
   pure $ inject x ()
 
 inspectProdG :: forall a t m.
@@ -110,7 +116,7 @@ inspectProdG :: forall a t m.
   -> [m]
 inspectProdG inspect (ProdG runProd) = do
   getConst $ runProd (Const . (:[]) . inspect)
-    (natmap (\_ -> Desc \tb -> Const $ [inspect tb]) (extract @a))
+    (natMap (\_ -> Desc \tb -> Const $ [inspect tb]) (extract @a))
 
 
 class HasIso g where
