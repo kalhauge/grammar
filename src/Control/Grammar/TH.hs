@@ -163,7 +163,9 @@ makeCoLimit ty = do
                         (ConP cn [VarP v | v <- vx ])
                         (NormalB (AppE
                           (AppE (VarE 'index) (AppE (VarE (colimIfName cn)) (VarE cl)))
-                          (TupE (map VarE vx))
+                          case vx of 
+                            v:[] -> VarE v
+                            _ -> TupE (map (Just . VarE) vx)
                           ))
                         []
                     | NormalC cn x <- cns
@@ -177,7 +179,10 @@ makeCoLimit ty = do
                 []
                 ( NormalB
                   $ RecConE colimName
-                    [ ( colimIfName cn, (AppE (ConE 'Op) (LamE [TupP [VarP v | v <- vx]]
+                    [ ( colimIfName cn, (AppE (ConE 'Op) (LamE (case vx of 
+                          v:[] -> [VarP v]
+                          _ -> [TupP [VarP v | v <- vx]]
+                          )
                         case vx of
                           [] -> ConE cn
                           _ -> (foldl AppE (ConE cn) [VarE v | v <- vx])
